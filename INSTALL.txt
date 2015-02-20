@@ -1,0 +1,61 @@
+What is this project for and how to use it:
+
+The point of this project is to have OSSEC correlate data events from auditd rather than dumping raw events to Splunk to be 
+indexed. Auditd is quite noisy and eats up a large chunk of Splunk licensing.  Using OSSEC to monitor auditd will cut down 
+significantly, the number of indexed events and will add another correlation layer to the audit events.
+
+The python script takes raw data from linux auditd on RHEL (and other) systems, and enriches it to be human readable.
+It does this through a system call for ausearch to read the /var/log/audit/audit.log and puts the results into a temporary 
+file which can then be monitored by OSSEC.  Because we are changing the raw data we have to rewrite the OSSEC decoder's regex
+XML file to reflect the changes and change the file monitored by OSSEC.  Then we write alerts that we want to OSSEC to monitor 
+for, and in my environment we feed the OSSEC alerts.log to Splunk for correlation of security events.
+
+Quick Steps to get started apologies if I miss a step:
+
+1. Install OSSEC
+2. Install Splunk Forwarder
+3. Edit <ossecroot>/ossec/etc/ossec.conf and add teh following XML
+
+  <localfile>
+    <log_format>syslog</log_format>
+    <location>(location)/enricheddata.log</location>
+  </localfile>
+
+4. Add XML regex decoders to the <ossecroot>/ossec/etc/decoder.xml file.
+5. Create alerts based on OSSEC XML alert standards that will monitor this file. 
+    I suggest creating a new XML file and placing it in <ossecroot>/ossec/rules/name_rules.xml 
+    Example:
+
+  <rule id="100101" level="7">
+	  <decoded_as>auditd</decoded_as>    
+	  <match>scp</match>    
+	  <description>Command executed "scp".</description>  
+  </rule>
+ 
+ 6. Create a Splunk input to monitor the OSSEC alerts.log in the OSSEC install
+ 7. Create a scripted input in Splunk to run the python script every 60 seconds or so in the inputs.conf.
+    (you could use cron if you are not using Splunk)
+
+The enriched data will now show up in Splunk or another correlation tool you use.
+
+Example Logs:
+
+Raw Data:
+type=SYSCALL msg=audit(1424367465.064:10123438): arch=c000003e syscall=59 success=yes exit=0 a0=a02ac0 a1=9f0970 a2=9a89e0 
+a3=7fff796a4620 items=2 ppid=15797 pid=30590 auid=545 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts6 
+ses=36367 comm="tail" exe="/usr/bin/tail" subj=unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023 key=(null)
+
+Enriched Data:
+type=SYSCALL msg=audit(02/19/2015 12:37:45.064:10123438) : arch=x86_64 syscall=execve success=yes exit=0 a0=a02ac0 a1=9f0970 
+a2=9a89e0 a3=7fff796a4620 items=2 ppid=15797 pid=30590 auid=scott.harrison uid=root gid=root euid=root suid=root fsuid=root 
+egid=root sgid=root fsgid=root tty=pts6 ses=36367 comm=tail exe=/usr/bin/tail subj=unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023 
+key=(null)
+
+
+Useful Links:
+https://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/6/html/Security_Guide/chap-system_auditing.html
+http://www.ossec.net/
+http://ossec-docs.readthedocs.org/en/latest/
+http://www.splunk.com/
+http://docs.splunk.com/Documentation/Splunk/6.2.1/AdvancedDev/ScriptedInputsIntro
+http://docs.splunk.com/Documentation/Splunk/6.2.1
