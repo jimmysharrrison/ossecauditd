@@ -1,5 +1,7 @@
-#!/usr/bin/python
-__author__ = 'scott.harrison'
+from subprocess import *
+import os
+import logging
+from logging.handlers import RotatingFileHandler
 
 # This script is designed to watch the /var/log/audit/auditd.log and enrich the data with ausearch substituting real user names
 # for UID and AUID and then put the resulting data into a file to be monitored by OSSEC or Splunk, or both.  My current setup
@@ -7,60 +9,84 @@ __author__ = 'scott.harrison'
 # Splunk indexes from auditd.log.  It is similar to the auditd ausearch scripted input get_ausearch.sh however the output is sent 
 # to a file rather than directly to splunk.  Application flow is as folllows:
 # auditd.log --> auditdlogenrichment.py --> OSSEC Alerting --> Splunk Indexing/Alerting
-# Suggested script run is every 60 seconds.
+# Suggested script run is every 30 seconds.
 
-from subprocess import *
-import os
+__author__ = 'scott.harrison'
 
-# Temp file for processing Auditd data through ausearch.
-LOGPROCESSINGFILE = 'auditdata.log'
-# Where Auditd logs are stored
+full_path = os.path.realpath(__file__)
+thispath, thisfile = os.path.split(full_path)
+
+LOGPROCESSINGFILE = thispath + "/../local/var/auditdata.log"
 AUDITLOG = '/var/log/audit/audit.log'
-# Tracking file to keep position of last enriched log in auditd.log.
-TRACKFILE = 'tracker.log'
-# Log that holds enriched data, and the log that OSSEC will monitor.
-ENRICHEDLOG = 'enricheddata.log'
-# Starting index in auditd.log, if you've never indexed Auditd in Splunk with OSSEC you should set this to 0. 
-# Negative numbers are bottom up positive numbers are top down.
-STARTINDEX = '-5000'
+TRACKFILE = thispath + "/../local/var/tracker.log"
+ENRICHEDLOG = thispath + "/../local/var/enricheddata.log"
+STARTINDEX = '0'
+
+""" LOGPROCESSINGFILE = "auditdata.log"
+AUDITLOG = '/var/log/audit/audit.log'
+TRACKFILE = "tracker.log"
+ENRICHEDLOG = "enricheddata.log" """
 
 
 def main():
 
-    if os.path.isfile(TRACKFILE):
-        indexedline = openfile(TRACKFILE)
-        if indexedline:
-            enrichdata(int(indexedline[0]))
+    if os.path.isfile(AUDITLOG):
+        if os.path.isfile(TRACKFILE):
+            indexed_line = openfile(TRACKFILE)
+            if indexed_line:
+                enrichdata(indexed_line[0])
+            else:
+                enrichdata(STARTINDEX)
         else:
-            enrichdata(STARTINDEX)
-    else:
-        writetracker(STARTINDEX)
-        indexedline = openfile(TRACKFILE)
-        if indexedline:
-            enrichdata(int(indexedline[0]))
-        else:
-            enrichdata(STARTINDEX)
+            writetracker(STARTINDEX)
+            indexed_line = openfile(TRACKFILE)
+            if indexed_line:
+                enrichdata(STARTINDEX)
+            else:
+                enrichdata(STARTINDEX)
 
 
 def enrichdata(indexedline):
+
+    log_process = create_rotating_log(LOGPROCESSINGFILE, 2)
+    log_enriched = create_rotating_log(ENRICHEDLOG, 4)
 
     logs = openfile(AUDITLOG)
     lastlogwritten = countloglines(AUDITLOG)
 
     if lastlogwritten < int(indexedline):
+        rolled_log = AUDITLOG + ".1"
+        if os.path.isfile(rolled_log):
+            roll_logs = openfile(AUDITLOG + ".1")
+
+            for roll_log in roll_logs[int(indexedline):]:
+                log_process.info(roll_log)
+
         indexedline = STARTINDEX
 
     writetracker(lastlogwritten)
 
     for log in logs[int(indexedline):]:
         if log:
-            writefile(log + '\n')
+            log_process.info(log)
 
-    enricheddata = Popen(['ausearch', '-i', '-if', LOGPROCESSINGFILE], stdout=PIPE).communicate()[0]
-    writeenricheddata(enricheddata)
+    try:
+        enricheddata = Popen(['ausearch', '-i', '-if', LOGPROCESSINGFILE], stdout=PIPE).communicate()[0]
 
-    if os.path.isfile(LOGPROCESSINGFILE):
-        os.remove(LOGPROCESSINGFILE)
+    except:
+
+        p = os.popen('ausearch -i')
+        enricheddata = p.read()
+
+    log_enriched.info(enricheddata)
+
+
+def create_rotating_log(path, count):
+    logger = logging.getLogger("Rotating Log")
+    logger.setLevel(logging.INFO)
+    handler = RotatingFileHandler(path, maxBytes=6e+6, backupCount=count)
+    logger.addHandler(handler)
+    return logger
 
 
 def countloglines(logfile):
@@ -79,25 +105,12 @@ def openfile(logfile):
     return logs
 
 
-def writefile(output):
-
-    fout = file(LOGPROCESSINGFILE, "ab")
-    fout.write(output)
-    fout.close()
-
-
 def writetracker(output):
 
     fout = file(TRACKFILE, "w")
     fout.write(str(output))
     fout.close()
 
-
-def writeenricheddata(output):
-
-    fout = file(ENRICHEDLOG, "w")
-    fout.write(output)
-    fout.close()
 
 if __name__ == "__main__":
     main()
