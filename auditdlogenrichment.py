@@ -2,6 +2,7 @@ from subprocess import *
 import os
 import logging
 from logging.handlers import RotatingFileHandler
+import sys
 
 # This script is designed to watch the /var/log/audit/auditd.log and enrich the data with ausearch substituting real user names
 # for UID and AUID and then put the resulting data into a file to be monitored by OSSEC or Splunk, or both.  My current setup
@@ -29,6 +30,16 @@ ENRICHEDLOG = "enricheddata.log" """
 
 
 def main():
+
+    try:
+        auditd_proc = Popen(['pidof auditd'], shell=True, stdout=PIPE).communicate()[0]
+        if auditd_proc:
+            pass
+        else:
+            sys.exit(0)
+    except:
+        os.system('echo "OSSEC:AUDITD: Not Running" >> /var/log/messages')
+        sys.exit(0)
 
     if os.path.isfile(AUDITLOG):
         if os.path.isfile(TRACKFILE):
